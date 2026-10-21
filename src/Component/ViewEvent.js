@@ -12,16 +12,10 @@ import "bootstrap/dist/css/bootstrap.min.css";
 import logo from "../Assets/logojv4.png";
 import Popup from "./popup";
 
-/**
- * Extract a human-readable message from any axios/fetch/unknown error.
- */
 const getErrorMessage = (error, fallback = "Something went wrong") => {
   if (!error) return fallback;
-
   const data = error.response?.data;
-
   if (typeof data === "string" && data.trim()) return data;
-
   if (data) {
     if (
       data.response &&
@@ -33,16 +27,15 @@ const getErrorMessage = (error, fallback = "Something went wrong") => {
       );
       if (values.length) return values.join(" | ");
     }
-
-    if (typeof data.message === "string" && data.message.trim()) {
-      return data.message;
-    }
-    if (typeof data.error === "string" && data.error.trim()) {
-      return data.error;
-    }
+    if (typeof data.message === "string" && data.message.trim()) return data.message;
+    if (typeof data.error === "string" && data.error.trim()) return data.error;
   }
-
   return error.message || fallback;
+};
+
+const LIMITS = {
+  subject: 255,
+  desc: 50000,
 };
 
 const ViewEvent = () => {
@@ -74,7 +67,6 @@ const ViewEvent = () => {
   const fetchEvents = async () => {
     try {
       setLoading(true);
-
       const response = await getRequest(`${GET_ALL_EVENTS}?flag=0`);
 
       if (response?.status === 200) {
@@ -128,15 +120,24 @@ const ViewEvent = () => {
   const indexOfFirstEvent = indexOfLastEvent - eventsPerPage;
   const currentEvents = filteredEvents.slice(indexOfFirstEvent, indexOfLastEvent);
 
-  const openEditModal = (event) => {
-    setSelectedEvent({ ...event });
+  const openEditModal = (event) => setSelectedEvent({ ...event });
+  const closeEditModal = () => setSelectedEvent(null);
+
+  /** Edit-modal field updater with limit + popup */
+  const handleEditFieldChange = (field, rawValue) => {
+    const limit = LIMITS[field];
+
+    if (limit && rawValue.length > limit) {
+      showPopup(
+        `Maximum ${limit} characters allowed for ${field === 'subject' ? 'subject' : 'description'}`,
+        "error"
+      );
+      setSelectedEvent((prev) => ({ ...prev, [field]: rawValue.slice(0, limit) }));
+    } else {
+      setSelectedEvent((prev) => ({ ...prev, [field]: rawValue }));
+    }
   };
 
-  const closeEditModal = () => {
-    setSelectedEvent(null);
-  };
-
-  // Client-side validation for the edit modal
   const validateEdit = () => {
     if (!selectedEvent) return false;
 
@@ -152,8 +153,8 @@ const ViewEvent = () => {
       showPopup("Subject is required", "error");
       return false;
     }
-    if (selectedEvent.subject.length > 255) {
-      showPopup("Subject must not exceed 255 characters", "error");
+    if (selectedEvent.subject.length > LIMITS.subject) {
+      showPopup(`Subject must not exceed ${LIMITS.subject} characters`, "error");
       return false;
     }
     if (!selectedEvent.description?.trim()) {
@@ -164,8 +165,8 @@ const ViewEvent = () => {
       showPopup("Description must be at least 10 characters", "error");
       return false;
     }
-    if (selectedEvent.description.length > 50000) {
-      showPopup("Description must not exceed 50000 characters", "error");
+    if (selectedEvent.description.length > LIMITS.desc) {
+      showPopup(`Description must not exceed ${LIMITS.desc} characters`, "error");
       return false;
     }
     return true;
@@ -176,17 +177,13 @@ const ViewEvent = () => {
 
     try {
       setSaving(true);
-
       const payload = {
         eventType: selectedEvent.eventType,
         subject: selectedEvent.subject,
         desc: selectedEvent.description,
       };
 
-      const response = await putRequest(
-        `${UPDATE_EVENT}/${selectedEvent.id}`,
-        payload
-      );
+      const response = await putRequest(`${UPDATE_EVENT}/${selectedEvent.id}`, payload);
 
       if (response?.status === 200) {
         setEvents((prev) =>
@@ -213,7 +210,6 @@ const ViewEvent = () => {
       if (!currentEvent) return;
 
       const newStatus = currentEvent.isActive ? "n" : "y";
-
       const response = await putRequest(
         `${CHANGE_EVENT_STATUS}/${id}?status=${newStatus}`
       );
@@ -236,11 +232,8 @@ const ViewEvent = () => {
 
   const handleBack = () => {
     const isLoggedIn = localStorage.getItem("loging");
-    if (isLoggedIn === "true") {
-      navigate("/dashboard");
-    } else {
-      navigate("/");
-    }
+    if (isLoggedIn === "true") navigate("/dashboard");
+    else navigate("/");
   };
 
   return (
@@ -390,10 +383,7 @@ const ViewEvent = () => {
                           key={index}
                           className={`page-item ${currentPage === index + 1 ? "active" : ""}`}
                         >
-                          <button
-                            className="page-link"
-                            onClick={() => setCurrentPage(index + 1)}
-                          >
+                          <button className="page-link" onClick={() => setCurrentPage(index + 1)}>
                             {index + 1}
                           </button>
                         </li>
@@ -462,16 +452,18 @@ const ViewEvent = () => {
                   <input
                     type="text"
                     className={`form-control ${
-                      selectedEvent.subject?.length > 255 ? "is-invalid" : ""
+                      selectedEvent.subject?.length >= LIMITS.subject ? "is-invalid" : ""
                     }`}
                     value={selectedEvent.subject}
-                    maxLength={255}
-                    onChange={(e) =>
-                      setSelectedEvent({ ...selectedEvent, subject: e.target.value })
-                    }
+                    onChange={(e) => handleEditFieldChange("subject", e.target.value)}
+                    // no maxLength — clip in handler + popup
                   />
-                  <div className="form-text text-end">
-                    {selectedEvent.subject?.length || 0}/255 characters
+                  <div
+                    className={`form-text text-end ${
+                      selectedEvent.subject?.length >= LIMITS.subject ? "text-danger fw-bold" : ""
+                    }`}
+                  >
+                    {selectedEvent.subject?.length || 0}/{LIMITS.subject} characters
                   </div>
                 </div>
 
@@ -485,22 +477,21 @@ const ViewEvent = () => {
                     </span>
                     <textarea
                       className={`form-control border-start-0 ps-0 ${
-                        selectedEvent.description?.length > 50000 ? "is-invalid" : ""
+                        selectedEvent.description?.length >= LIMITS.desc ? "is-invalid" : ""
                       }`}
                       rows="6"
                       value={selectedEvent.description}
-                      maxLength={50000}
-                      onChange={(e) =>
-                        setSelectedEvent({
-                          ...selectedEvent,
-                          description: e.target.value.slice(0, 50000),
-                        })
-                      }
+                      onChange={(e) => handleEditFieldChange("description", e.target.value)}
                       placeholder="Provide details about your event..."
+                      // no maxLength — clip in handler + popup
                     />
                   </div>
-                  <div className="form-text text-end">
-                    {selectedEvent.description?.length || 0}/50000 characters
+                  <div
+                    className={`form-text text-end ${
+                      selectedEvent.description?.length >= LIMITS.desc ? "text-danger fw-bold" : ""
+                    }`}
+                  >
+                    {selectedEvent.description?.length || 0}/{LIMITS.desc} characters
                   </div>
                 </div>
               </div>

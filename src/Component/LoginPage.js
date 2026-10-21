@@ -5,23 +5,11 @@ import { CREATE_EVENT } from "../config/apiConfig";
 import Popup from "./popup";
 import logo from "../Assets/logojv4.png";
 
-/**
- * Extract a human-readable message from any axios/fetch/unknown error.
- * Handles:
- *  - { response: { subject: "..." , desc: "..." }, message: "..." }  (validation map)
- *  - { response: null, message: "..." }                             (ApiResponse error)
- *  - plain string body
- *  - raw Error object
- */
 const getErrorMessage = (error, fallback = "Something went wrong") => {
   if (!error) return fallback;
-
   const data = error.response?.data;
-
   if (typeof data === "string" && data.trim()) return data;
-
   if (data) {
-    // Field-level validation errors: { response: { field: "msg", ... }, message: "..." }
     if (
       data.response &&
       typeof data.response === "object" &&
@@ -32,16 +20,16 @@ const getErrorMessage = (error, fallback = "Something went wrong") => {
       );
       if (values.length) return values.join(" | ");
     }
-
-    if (typeof data.message === "string" && data.message.trim()) {
-      return data.message;
-    }
-    if (typeof data.error === "string" && data.error.trim()) {
-      return data.error;
-    }
+    if (typeof data.message === "string" && data.message.trim()) return data.message;
+    if (typeof data.error === "string" && data.error.trim()) return data.error;
   }
-
   return error.message || fallback;
+};
+
+// Character limits — single source of truth
+const LIMITS = {
+  subject: 255,
+  desc: 50000,
 };
 
 const JVEventPage = () => {
@@ -71,11 +59,8 @@ const JVEventPage = () => {
 
   const handleToggleEvents = () => {
     const isLoggedIn = localStorage.getItem("loging");
-    if (isLoggedIn === "true") {
-      navigate("/view-events");
-    } else {
-      navigate("/");
-    }
+    if (isLoggedIn === "true") navigate("/view-events");
+    else navigate("/");
   };
 
   const showPopup = (message, type = 'default') => {
@@ -86,9 +71,23 @@ const JVEventPage = () => {
     setPopup({ show: false, message: '', type: 'default' });
   };
 
+  /**
+   * Generic input handler with a hard character limit + popup warning.
+   * We do NOT use maxLength — we clip ourselves so we can also show a popup.
+   */
   const handleInputChange = (e) => {
     const { name, value } = e.target;
-    setFormData(prev => ({ ...prev, [name]: value }));
+    const limit = LIMITS[name];
+
+    if (limit && value.length > limit) {
+      showPopup(
+        `Maximum ${limit} characters allowed for ${name === 'subject' ? 'subject' : 'description'}`,
+        'error'
+      );
+      setFormData(prev => ({ ...prev, [name]: value.slice(0, limit) }));
+    } else {
+      setFormData(prev => ({ ...prev, [name]: value }));
+    }
 
     if (errors[name]) {
       setErrors(prev => ({ ...prev, [name]: '' }));
@@ -110,8 +109,8 @@ const JVEventPage = () => {
     if (!formData.subject.trim()) {
       newErrors.subject = 'Please provide a subject';
       valid = false;
-    } else if (formData.subject.length > 255) {
-      newErrors.subject = 'Subject must not exceed 255 characters';
+    } else if (formData.subject.length > LIMITS.subject) {
+      newErrors.subject = `Subject must not exceed ${LIMITS.subject} characters`;
       valid = false;
     }
 
@@ -121,15 +120,14 @@ const JVEventPage = () => {
     } else if (formData.desc.trim().length < 10) {
       newErrors.desc = 'Description must be at least 10 characters long';
       valid = false;
-    } else if (formData.desc.trim().length > 50000) {
-      newErrors.desc = 'Description must not exceed 50000 characters';
+    } else if (formData.desc.length > LIMITS.desc) {
+      newErrors.desc = `Description must not exceed ${LIMITS.desc} characters`;
       valid = false;
     }
 
     setErrors(newErrors);
 
     if (!valid) {
-      // Show first error as popup too
       const first = Object.values(newErrors)[0];
       if (first) showPopup(first, 'error');
     }
@@ -139,7 +137,6 @@ const JVEventPage = () => {
 
   const handleSubmit = async (e) => {
     e.preventDefault();
-
     if (!validateForm()) return;
 
     const isLoggedIn = () => localStorage.getItem("loging") === "true";
@@ -157,7 +154,6 @@ const JVEventPage = () => {
         desc: formData.desc
       });
 
-      // Accept 200 OR any 2xx — backend wraps as { response, status, message }
       const statusCode = response?.status ?? 200;
       if (statusCode === 200 || (statusCode >= 200 && statusCode < 300)) {
         showPopup('Event created successfully!', 'success');
@@ -185,13 +181,7 @@ const JVEventPage = () => {
                   src={logo}
                   alt="Logo"
                   className="position-absolute"
-                  style={{
-                    width: "150px",
-                    height: "50px",
-                    top: "10px",
-                    left: "20px",
-                    borderRadius: "8px"
-                  }}
+                  style={{ width: "150px", height: "50px", top: "10px", left: "20px", borderRadius: "8px" }}
                 />
                 <h4 className="card-title mb-0">JV Event</h4>
                 <button
@@ -226,9 +216,7 @@ const JVEventPage = () => {
                         onChange={handleInputChange}
                       >
                         {eventTypes.map((option) => (
-                          <option key={option.value} value={option.value}>
-                            {option.label}
-                          </option>
+                          <option key={option.value} value={option.value}>{option.label}</option>
                         ))}
                       </select>
                     </div>
@@ -254,14 +242,18 @@ const JVEventPage = () => {
                         value={formData.subject}
                         onChange={handleInputChange}
                         placeholder="Enter event subject"
-                        maxLength={255}
+                        // NOTE: no maxLength — we clip in onChange so we can show a popup
                       />
                     </div>
                     {errors.subject && (
                       <div className="text-danger small mt-1">{errors.subject}</div>
                     )}
-                    <div className="form-text text-end">
-                      {formData.subject.length}/255 characters
+                    <div
+                      className={`form-text text-end ${
+                        formData.subject.length >= LIMITS.subject ? 'text-danger fw-bold' : ''
+                      }`}
+                    >
+                      {formData.subject.length}/{LIMITS.subject} characters
                     </div>
                   </div>
 
@@ -282,14 +274,18 @@ const JVEventPage = () => {
                         placeholder="Provide details about your event..."
                         value={formData.desc}
                         onChange={handleInputChange}
-                        maxLength={50000}
+                        // NOTE: no maxLength — clip in onChange
                       ></textarea>
                     </div>
                     {errors.desc && (
                       <div className="text-danger small mt-1">{errors.desc}</div>
                     )}
-                    <div className="form-text text-end">
-                      {formData.desc.length}/50000 characters
+                    <div
+                      className={`form-text text-end ${
+                        formData.desc.length >= LIMITS.desc ? 'text-danger fw-bold' : ''
+                      }`}
+                    >
+                      {formData.desc.length}/{LIMITS.desc} characters
                     </div>
                   </div>
 
@@ -304,11 +300,7 @@ const JVEventPage = () => {
                         'Create Event'
                       )}
                     </button>
-                    <button
-                      type="button"
-                      className="btn btn-primary btn-lg"
-                      onClick={handleToggleEvents}
-                    >
+                    <button type="button" className="btn btn-primary btn-lg" onClick={handleToggleEvents}>
                       View Events
                     </button>
                   </div>
@@ -329,11 +321,7 @@ const JVEventPage = () => {
       />
 
       {popup.show && (
-        <Popup
-          message={popup.message}
-          type={popup.type}
-          onClose={closePopup}
-        />
+        <Popup message={popup.message} type={popup.type} onClose={closePopup} />
       )}
     </div>
   );
