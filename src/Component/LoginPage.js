@@ -2,8 +2,47 @@ import React, { useState } from 'react';
 import { useNavigate } from "react-router-dom";
 import { postRequest } from "../service/apiService";
 import { CREATE_EVENT } from "../config/apiConfig";
-import Popup from "./popup"; // Import your Popup component
+import Popup from "./popup";
 import logo from "../Assets/logojv4.png";
+
+/**
+ * Extract a human-readable message from any axios/fetch/unknown error.
+ * Handles:
+ *  - { response: { subject: "..." , desc: "..." }, message: "..." }  (validation map)
+ *  - { response: null, message: "..." }                             (ApiResponse error)
+ *  - plain string body
+ *  - raw Error object
+ */
+const getErrorMessage = (error, fallback = "Something went wrong") => {
+  if (!error) return fallback;
+
+  const data = error.response?.data;
+
+  if (typeof data === "string" && data.trim()) return data;
+
+  if (data) {
+    // Field-level validation errors: { response: { field: "msg", ... }, message: "..." }
+    if (
+      data.response &&
+      typeof data.response === "object" &&
+      !Array.isArray(data.response)
+    ) {
+      const values = Object.values(data.response).filter(
+        (v) => typeof v === "string" && v.trim()
+      );
+      if (values.length) return values.join(" | ");
+    }
+
+    if (typeof data.message === "string" && data.message.trim()) {
+      return data.message;
+    }
+    if (typeof data.error === "string" && data.error.trim()) {
+      return data.error;
+    }
+  }
+
+  return error.message || fallback;
+};
 
 const JVEventPage = () => {
   const [formData, setFormData] = useState({
@@ -21,7 +60,6 @@ const JVEventPage = () => {
   });
   const navigate = useNavigate();
 
-  // Event type options
   const eventTypes = [
     { value: '', label: 'Select an event type' },
     { value: 'news', label: 'News' },
@@ -33,46 +71,27 @@ const JVEventPage = () => {
 
   const handleToggleEvents = () => {
     const isLoggedIn = localStorage.getItem("loging");
-
     if (isLoggedIn === "true") {
-      // ✅ User logged in → go to events
       navigate("/view-events");
     } else {
-      // ❌ Not logged in → go to dashboard
       navigate("/");
     }
   };
 
-
   const showPopup = (message, type = 'default') => {
-    setPopup({
-      show: true,
-      message,
-      type
-    });
+    setPopup({ show: true, message, type });
   };
 
   const closePopup = () => {
-    setPopup({
-      show: false,
-      message: '',
-      type: 'default'
-    });
+    setPopup({ show: false, message: '', type: 'default' });
   };
 
   const handleInputChange = (e) => {
     const { name, value } = e.target;
-    setFormData(prev => ({
-      ...prev,
-      [name]: value
-    }));
+    setFormData(prev => ({ ...prev, [name]: value }));
 
-    // Clear error when user starts typing
     if (errors[name]) {
-      setErrors(prev => ({
-        ...prev,
-        [name]: ''
-      }));
+      setErrors(prev => ({ ...prev, [name]: '' }));
     }
   };
 
@@ -88,40 +107,46 @@ const JVEventPage = () => {
       valid = false;
     }
 
-    if (formData.subject.length > 100) {
-      newErrors.subject = 'Subject must not exceed 100 characters';
+    if (!formData.subject.trim()) {
+      newErrors.subject = 'Please provide a subject';
+      valid = false;
+    } else if (formData.subject.length > 255) {
+      newErrors.subject = 'Subject must not exceed 255 characters';
       valid = false;
     }
 
     if (!formData.desc.trim()) {
       newErrors.desc = 'Please provide a description';
       valid = false;
-    } else if (formData.desc.trim().length > 50000) {
-      newErrors.desc = 'Description must not exceed 50000 characters';
-      valid = false;
     } else if (formData.desc.trim().length < 10) {
       newErrors.desc = 'Description must be at least 10 characters long';
+      valid = false;
+    } else if (formData.desc.trim().length > 50000) {
+      newErrors.desc = 'Description must not exceed 50000 characters';
       valid = false;
     }
 
     setErrors(newErrors);
+
+    if (!valid) {
+      // Show first error as popup too
+      const first = Object.values(newErrors)[0];
+      if (first) showPopup(first, 'error');
+    }
+
     return valid;
   };
 
   const handleSubmit = async (e) => {
     e.preventDefault();
 
-    if (!validateForm()) {
-      return;
-    }
+    if (!validateForm()) return;
 
     const isLoggedIn = () => localStorage.getItem("loging") === "true";
-    if (isLoggedIn()) {
-      // continue
-    } else {
+    if (!isLoggedIn()) {
       navigate("/");
+      return;
     }
-
 
     setIsLoading(true);
 
@@ -132,21 +157,18 @@ const JVEventPage = () => {
         desc: formData.desc
       });
 
-      if (response && response.status === 200) {
+      // Accept 200 OR any 2xx — backend wraps as { response, status, message }
+      const statusCode = response?.status ?? 200;
+      if (statusCode === 200 || (statusCode >= 200 && statusCode < 300)) {
         showPopup('Event created successfully!', 'success');
-
-        // Reset form after successful creation
         setFormData({ eventType: '', subject: '', desc: '' });
+        setErrors({});
       } else {
-        showPopup('Failed to create event. Please try again.', 'error');
+        showPopup(response?.message || 'Failed to create event. Please try again.', 'error');
       }
     } catch (error) {
       console.error("Create event request failed:", error);
-      if (error.response && error.response.data) {
-        showPopup(error.response.data.message || 'An error occurred', 'error');
-      } else {
-        showPopup('An error occurred while creating the event', 'error');
-      }
+      showPopup(getErrorMessage(error, 'Failed to create event'), 'error');
     } finally {
       setIsLoading(false);
     }
@@ -159,7 +181,6 @@ const JVEventPage = () => {
           <div className="col-12 col-md-8 col-lg-6">
             <div className="card shadow-lg border-0 rounded-4">
               <div className="card-header bg-primary text-white text-center py-3 rounded-top-4 position-relative">
-                {/* Logo on left */}
                 <img
                   src={logo}
                   alt="Logo"
@@ -172,11 +193,7 @@ const JVEventPage = () => {
                     borderRadius: "8px"
                   }}
                 />
-
-                {/* Title in center */}
                 <h4 className="card-title mb-0">JV Event</h4>
-
-                {/* Logout button on right */}
                 <button
                   className="btn btn-danger position-absolute"
                   style={{ top: "10px", right: "20px" }}
@@ -188,13 +205,11 @@ const JVEventPage = () => {
                 >
                   Logout
                 </button>
-
               </div>
 
               <div className="card-body p-4 p-md-5">
-                {/* Event Form */}
-                <form onSubmit={handleSubmit}>
-                  {/* Event Type Field */}
+                <form onSubmit={handleSubmit} noValidate>
+                  {/* Event Type */}
                   <div className="mb-4">
                     <label htmlFor="eventType" className="form-label fw-medium">
                       Event Type <span className="text-danger">*</span>
@@ -222,10 +237,10 @@ const JVEventPage = () => {
                     )}
                   </div>
 
-                  {/* Subject Field */}
+                  {/* Subject */}
                   <div className="mb-4">
                     <label htmlFor="subject" className="form-label fw-medium">
-                      Subject
+                      Subject <span className="text-danger">*</span>
                     </label>
                     <div className="input-group">
                       <span className="input-group-text bg-light border-end-0">
@@ -239,17 +254,18 @@ const JVEventPage = () => {
                         value={formData.subject}
                         onChange={handleInputChange}
                         placeholder="Enter event subject"
+                        maxLength={255}
                       />
                     </div>
                     {errors.subject && (
                       <div className="text-danger small mt-1">{errors.subject}</div>
                     )}
                     <div className="form-text text-end">
-                      {formData.subject.length}/100 characters
+                      {formData.subject.length}/255 characters
                     </div>
                   </div>
 
-                  {/* Description Field */}
+                  {/* Description */}
                   <div className="mb-4">
                     <label htmlFor="desc" className="form-label fw-medium">
                       Description <span className="text-danger">*</span>
@@ -266,6 +282,7 @@ const JVEventPage = () => {
                         placeholder="Provide details about your event..."
                         value={formData.desc}
                         onChange={handleInputChange}
+                        maxLength={50000}
                       ></textarea>
                     </div>
                     {errors.desc && (
@@ -276,7 +293,6 @@ const JVEventPage = () => {
                     </div>
                   </div>
 
-                  {/* Submit Button */}
                   <div className="d-flex gap-2">
                     <button type="submit" className="btn btn-primary btn-lg" disabled={isLoading}>
                       {isLoading ? (
@@ -303,19 +319,15 @@ const JVEventPage = () => {
         </div>
       </div>
 
-      {/* Bootstrap Icons CDN */}
       <link
         href="https://cdnjs.cloudflare.com/ajax/libs/bootstrap-icons/1.11.1/font/bootstrap-icons.min.css"
         rel="stylesheet"
       />
-
-      {/* Bootstrap CSS */}
       <link
         href="https://cdnjs.cloudflare.com/ajax/libs/bootstrap/5.3.2/css/bootstrap.min.css"
         rel="stylesheet"
       />
 
-      {/* Popup for messages */}
       {popup.show && (
         <Popup
           message={popup.message}

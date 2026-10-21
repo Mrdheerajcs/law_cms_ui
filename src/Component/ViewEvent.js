@@ -1,9 +1,6 @@
 import React, { useEffect, useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
-import {
-  getRequest,
-  putRequest,
-} from "../service/apiService";
+import { getRequest, putRequest } from "../service/apiService";
 
 import {
   GET_ALL_EVENTS,
@@ -15,9 +12,41 @@ import "bootstrap/dist/css/bootstrap.min.css";
 import logo from "../Assets/logojv4.png";
 import Popup from "./popup";
 
+/**
+ * Extract a human-readable message from any axios/fetch/unknown error.
+ */
+const getErrorMessage = (error, fallback = "Something went wrong") => {
+  if (!error) return fallback;
+
+  const data = error.response?.data;
+
+  if (typeof data === "string" && data.trim()) return data;
+
+  if (data) {
+    if (
+      data.response &&
+      typeof data.response === "object" &&
+      !Array.isArray(data.response)
+    ) {
+      const values = Object.values(data.response).filter(
+        (v) => typeof v === "string" && v.trim()
+      );
+      if (values.length) return values.join(" | ");
+    }
+
+    if (typeof data.message === "string" && data.message.trim()) {
+      return data.message;
+    }
+    if (typeof data.error === "string" && data.error.trim()) {
+      return data.error;
+    }
+  }
+
+  return error.message || fallback;
+};
+
 const ViewEvent = () => {
   const navigate = useNavigate();
-
 
   const [events, setEvents] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -29,7 +58,6 @@ const ViewEvent = () => {
   const eventsPerPage = 5;
 
   const [selectedEvent, setSelectedEvent] = useState(null);
-
   const [saving, setSaving] = useState(false);
 
   const [popup, setPopup] = useState({
@@ -38,76 +66,50 @@ const ViewEvent = () => {
     type: "default",
   });
 
-
   useEffect(() => {
     fetchEvents();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   const fetchEvents = async () => {
     try {
       setLoading(true);
 
-      const response = await getRequest(
-        `${GET_ALL_EVENTS}?flag=0`
-      );
+      const response = await getRequest(`${GET_ALL_EVENTS}?flag=0`);
 
       if (response?.status === 200) {
-        const formattedData = response.response.map(
-          (event) => ({
-            id: event.id,
-            eventType: event.eventType?.toLowerCase(),
-            subject: event.subject,
-            description: event.desc,
-            isActive: event.status === "y",
-          })
-        );
-
+        const formattedData = (response.response || []).map((event) => ({
+          id: event.id,
+          eventType: event.eventType?.toLowerCase() || "",
+          subject: event.subject || "",
+          description: event.desc ?? event.description ?? "",
+          isActive: event.status === "y",
+        }));
         setEvents(formattedData);
       } else {
-        showPopup("Failed to fetch events", "error");
+        showPopup(response?.message || "Failed to fetch events", "error");
       }
     } catch (error) {
       console.error(error);
-      showPopup("Something went wrong", "error");
+      showPopup(getErrorMessage(error, "Failed to fetch events"), "error");
     } finally {
       setLoading(false);
     }
   };
 
-
-  const showPopup = (
-    message,
-    type = "default"
-  ) => {
-    setPopup({
-      show: true,
-      message,
-      type,
-    });
-
+  const showPopup = (message, type = "default") => {
+    setPopup({ show: true, message, type });
     setTimeout(() => {
-      setPopup({
-        show: false,
-        message: "",
-        type: "default",
-      });
+      setPopup({ show: false, message: "", type: "default" });
     }, 2500);
   };
 
-
   const filteredEvents = useMemo(() => {
     return events.filter((event) => {
-
       const search = searchTerm.toLowerCase();
-
-      const subject =
-        event.subject?.toLowerCase() || "";
-
-      const description =
-        event.description?.toLowerCase() || "";
-
-      const type =
-        event.eventType?.toLowerCase() || "";
+      const subject = event.subject?.toLowerCase() || "";
+      const description = event.description?.toLowerCase() || "";
+      const type = event.eventType?.toLowerCase() || "";
 
       const matchesSearch =
         subject.includes(search) ||
@@ -115,29 +117,16 @@ const ViewEvent = () => {
         type.includes(search);
 
       const matchesFilter =
-        filterType === "all" ||
-        type === filterType.toLowerCase();
+        filterType === "all" || type === filterType.toLowerCase();
 
       return matchesSearch && matchesFilter;
     });
   }, [events, searchTerm, filterType]);
 
-
-  const totalPages = Math.ceil(
-    filteredEvents.length / eventsPerPage
-  );
-
-  const indexOfLastEvent =
-    currentPage * eventsPerPage;
-
-  const indexOfFirstEvent =
-    indexOfLastEvent - eventsPerPage;
-
-  const currentEvents = filteredEvents.slice(
-    indexOfFirstEvent,
-    indexOfLastEvent
-  );
-
+  const totalPages = Math.ceil(filteredEvents.length / eventsPerPage) || 1;
+  const indexOfLastEvent = currentPage * eventsPerPage;
+  const indexOfFirstEvent = indexOfLastEvent - eventsPerPage;
+  const currentEvents = filteredEvents.slice(indexOfFirstEvent, indexOfLastEvent);
 
   const openEditModal = (event) => {
     setSelectedEvent({ ...event });
@@ -147,8 +136,44 @@ const ViewEvent = () => {
     setSelectedEvent(null);
   };
 
+  // Client-side validation for the edit modal
+  const validateEdit = () => {
+    if (!selectedEvent) return false;
+
+    if (!selectedEvent.eventType) {
+      showPopup("Event type is required", "error");
+      return false;
+    }
+    if (selectedEvent.eventType.length > 15) {
+      showPopup("Event type must not exceed 15 characters", "error");
+      return false;
+    }
+    if (!selectedEvent.subject?.trim()) {
+      showPopup("Subject is required", "error");
+      return false;
+    }
+    if (selectedEvent.subject.length > 255) {
+      showPopup("Subject must not exceed 255 characters", "error");
+      return false;
+    }
+    if (!selectedEvent.description?.trim()) {
+      showPopup("Description is required", "error");
+      return false;
+    }
+    if (selectedEvent.description.trim().length < 10) {
+      showPopup("Description must be at least 10 characters", "error");
+      return false;
+    }
+    if (selectedEvent.description.length > 50000) {
+      showPopup("Description must not exceed 50000 characters", "error");
+      return false;
+    }
+    return true;
+  };
 
   const handleUpdate = async () => {
+    if (!validateEdit()) return;
+
     try {
       setSaving(true);
 
@@ -164,44 +189,30 @@ const ViewEvent = () => {
       );
 
       if (response?.status === 200) {
-
         setEvents((prev) =>
           prev.map((event) =>
-            event.id === selectedEvent.id
-              ? selectedEvent
-              : event
+            event.id === selectedEvent.id ? selectedEvent : event
           )
         );
-
-        showPopup(
-          "Event Updated Successfully",
-          "success"
-        );
-
+        showPopup("Event Updated Successfully", "success");
         closeEditModal();
-
       } else {
-        showPopup("Update Failed", "error");
+        showPopup(response?.message || "Update Failed", "error");
       }
-
     } catch (error) {
       console.error(error);
-      showPopup("Something went wrong", "error");
+      showPopup(getErrorMessage(error, "Update failed"), "error");
     } finally {
       setSaving(false);
     }
   };
 
-
   const handleToggle = async (id) => {
     try {
-      const currentEvent = events.find(
-        (e) => e.id === id
-      );
+      const currentEvent = events.find((e) => e.id === id);
+      if (!currentEvent) return;
 
-      const newStatus = currentEvent.isActive
-        ? "n"
-        : "y";
+      const newStatus = currentEvent.isActive ? "n" : "y";
 
       const response = await putRequest(
         `${CHANGE_EVENT_STATUS}/${id}?status=${newStatus}`
@@ -210,36 +221,21 @@ const ViewEvent = () => {
       if (response?.status === 200) {
         setEvents((prev) =>
           prev.map((event) =>
-            event.id === id
-              ? {
-                ...event,
-                isActive: !event.isActive,
-              }
-              : event
+            event.id === id ? { ...event, isActive: !event.isActive } : event
           )
         );
-
-        showPopup(
-          "Status Updated",
-          "success"
-        );
+        showPopup("Status Updated", "success");
       } else {
-        showPopup(
-          "Status Update Failed",
-          "error"
-        );
+        showPopup(response?.message || "Status Update Failed", "error");
       }
     } catch (error) {
       console.error(error);
-      showPopup("Something went wrong", "error");
+      showPopup(getErrorMessage(error, "Status update failed"), "error");
     }
   };
 
-
   const handleBack = () => {
-    const isLoggedIn =
-      localStorage.getItem("loging");
-
+    const isLoggedIn = localStorage.getItem("loging");
     if (isLoggedIn === "true") {
       navigate("/dashboard");
     } else {
@@ -250,63 +246,33 @@ const ViewEvent = () => {
   return (
     <div
       className="min-vh-100 py-4"
-      style={{
-        background:
-          "linear-gradient(to right, #eef2f7, #d9e7ff)",
-      }}
+      style={{ background: "linear-gradient(to right, #eef2f7, #d9e7ff)" }}
     >
       <div className="container-fluid px-lg-5">
-
-
         <div className="card border-0 shadow-lg rounded-4 overflow-hidden">
-
-
           <div
             className="position-relative text-white p-4"
-            style={{
-              background:
-                "linear-gradient(135deg, #0d6efd, #084298)",
-            }}
+            style={{ background: "linear-gradient(135deg, #0d6efd, #084298)" }}
           >
             <img
               src={logo}
               alt="logo"
-              style={{
-                width: "120px",
-                position: "absolute",
-                left: "20px",
-                top: "12px",
-              }}
+              style={{ width: "120px", position: "absolute", left: "20px", top: "12px" }}
             />
-
-            <h2 className="text-center fw-bold mb-0">
-              Event Management
-            </h2>
+            <h2 className="text-center fw-bold mb-0">Event Management</h2>
           </div>
 
-
           <div className="card-body p-4">
-
-
             <div className="row g-3 mb-4">
-
               <div className="col-md-8">
                 <div className="input-group shadow-sm">
-
-                  <span className="input-group-text bg-white border-0">
-                    🔍
-                  </span>
-
+                  <span className="input-group-text bg-white border-0">🔍</span>
                   <input
                     type="text"
                     className="form-control border-0 shadow-none"
                     placeholder="Search events..."
                     value={searchTerm}
-                    onChange={(e) =>
-                      setSearchTerm(
-                        e.target.value
-                      )
-                    }
+                    onChange={(e) => setSearchTerm(e.target.value)}
                   />
                 </div>
               </div>
@@ -315,265 +281,140 @@ const ViewEvent = () => {
                 <select
                   className="form-select shadow-sm"
                   value={filterType}
-                  onChange={(e) =>
-                    setFilterType(
-                      e.target.value
-                    )
-                  }
+                  onChange={(e) => setFilterType(e.target.value)}
                 >
-                  <option value="all">
-                    All Types
-                  </option>
-                  <option value="news">
-                    News
-                  </option>
-                  <option value="event">
-                    Event
-                  </option>
-                  <option value="webinar">
-                    Webinar
-                  </option>
-                  <option value="blog">
-                    Blog
-                  </option>
-                  <option value="article">
-                    Article
-                  </option>
+                  <option value="all">All Types</option>
+                  <option value="news">News</option>
+                  <option value="event">Event</option>
+                  <option value="webinar">Webinar</option>
+                  <option value="blog">Blog</option>
+                  <option value="article">Article</option>
                 </select>
               </div>
             </div>
 
-
             {loading ? (
               <div className="text-center py-5">
-                <div
-                  className="spinner-border text-primary"
-                  role="status"
-                />
-                <p className="mt-3">
-                  Loading Events...
-                </p>
+                <div className="spinner-border text-primary" role="status" />
+                <p className="mt-3">Loading Events...</p>
               </div>
             ) : (
               <>
                 <div className="table-responsive">
-
                   <table className="table align-middle">
-
-                    <thead
-                      style={{
-                        background: "#f4f7fb",
-                      }}
-                    >
+                    <thead style={{ background: "#f4f7fb" }}>
                       <tr>
                         <th>Type</th>
                         <th>Subject</th>
                         <th>Description</th>
-                        <th className="text-center">
-                          Status
-                        </th>
-                        <th className="text-center">
-                          Action
-                        </th>
+                        <th className="text-center">Status</th>
+                        <th className="text-center">Action</th>
                       </tr>
                     </thead>
-
                     <tbody>
-
                       {currentEvents.length > 0 ? (
-                        currentEvents.map(
-                          (event) => (
-                            <tr
-                              key={event.id}
-                              className="shadow-sm"
-                              style={{
-                                borderRadius:
-                                  "12px",
-                              }}
-                            >
-                              <td>
-                                <span className="badge bg-primary px-3 py-2">
-                                  {
-                                    event.eventType
-                                  }
-                                </span>
-                              </td>
-
-                              <td className="fw-semibold">
-                                {event.subject}
-                              </td>
-
-                              <td
+                        currentEvents.map((event) => (
+                          <tr key={event.id} className="shadow-sm" style={{ borderRadius: "12px" }}>
+                            <td>
+                              <span className="badge bg-primary px-3 py-2">
+                                {event.eventType}
+                              </span>
+                            </td>
+                            <td className="fw-semibold">{event.subject}</td>
+                            <td style={{ maxWidth: "350px" }}>
+                              <div
                                 style={{
-                                  maxWidth:
-                                    "350px",
+                                  overflow: "hidden",
+                                  textOverflow: "ellipsis",
+                                  whiteSpace: "nowrap",
                                 }}
                               >
-                                <div
-                                  style={{
-                                    overflow:
-                                      "hidden",
-                                    textOverflow:
-                                      "ellipsis",
-                                    whiteSpace:
-                                      "nowrap",
-                                  }}
-                                >
-                                  {
-                                    event.description
-                                  }
-                                </div>
-                              </td>
-
-
-                              <td className="text-center">
-
-                                <div className="form-check form-switch d-flex justify-content-center">
-
-                                  <input
-                                    className="form-check-input"
-                                    type="checkbox"
-                                    checked={
-                                      event.isActive
-                                    }
-                                    onChange={() =>
-                                      handleToggle(
-                                        event.id
-                                      )
-                                    }
-                                    style={{
-                                      width:
-                                        "3em",
-                                      height:
-                                        "1.5em",
-                                    }}
-                                  />
-                                </div>
-
-                                <small
-                                  className={
-                                    event.isActive
-                                      ? "text-success fw-bold"
-                                      : "text-danger fw-bold"
-                                  }
-                                >
-                                  {event.isActive
-                                    ? "ACTIVE"
-                                    : "INACTIVE"}
-                                </small>
-                              </td>
-
-
-                              <td className="text-center">
-
-                                <button
-                                  className="btn btn-light border shadow-sm"
-                                  onClick={() =>
-                                    openEditModal(
-                                      event
-                                    )
-                                  }
-                                >
-                                  ✏️ Edit
-                                </button>
-
-                              </td>
-                            </tr>
-                          )
-                        )
+                                {event.description}
+                              </div>
+                            </td>
+                            <td className="text-center">
+                              <div className="form-check form-switch d-flex justify-content-center">
+                                <input
+                                  className="form-check-input"
+                                  type="checkbox"
+                                  checked={event.isActive}
+                                  onChange={() => handleToggle(event.id)}
+                                  style={{ width: "3em", height: "1.5em" }}
+                                />
+                              </div>
+                              <small
+                                className={
+                                  event.isActive
+                                    ? "text-success fw-bold"
+                                    : "text-danger fw-bold"
+                                }
+                              >
+                                {event.isActive ? "ACTIVE" : "INACTIVE"}
+                              </small>
+                            </td>
+                            <td className="text-center">
+                              <button
+                                className="btn btn-light border shadow-sm"
+                                onClick={() => openEditModal(event)}
+                              >
+                                ✏️ Edit
+                              </button>
+                            </td>
+                          </tr>
+                        ))
                       ) : (
                         <tr>
-                          <td
-                            colSpan="5"
-                            className="text-center py-5"
-                          >
+                          <td colSpan="5" className="text-center py-5">
                             No Events Found
                           </td>
                         </tr>
                       )}
-
                     </tbody>
                   </table>
                 </div>
 
-
                 {filteredEvents.length > 0 && (
                   <nav className="mt-4">
                     <ul className="pagination justify-content-center">
-
-                      <li
-                        className={`page-item ${currentPage === 1
-                          ? "disabled"
-                          : ""
-                          }`}
-                      >
+                      <li className={`page-item ${currentPage === 1 ? "disabled" : ""}`}>
                         <button
                           className="page-link"
-                          onClick={() =>
-                            setCurrentPage(
-                              (prev) =>
-                                prev - 1
-                            )
-                          }
+                          onClick={() => setCurrentPage((prev) => Math.max(1, prev - 1))}
                         >
                           Prev
                         </button>
                       </li>
 
-                      {[...Array(totalPages)].map(
-                        (_, index) => (
-                          <li
-                            key={index}
-                            className={`page-item ${currentPage ===
-                              index + 1
-                              ? "active"
-                              : ""
-                              }`}
+                      {[...Array(totalPages)].map((_, index) => (
+                        <li
+                          key={index}
+                          className={`page-item ${currentPage === index + 1 ? "active" : ""}`}
+                        >
+                          <button
+                            className="page-link"
+                            onClick={() => setCurrentPage(index + 1)}
                           >
-                            <button
-                              className="page-link"
-                              onClick={() =>
-                                setCurrentPage(
-                                  index + 1
-                                )
-                              }
-                            >
-                              {index + 1}
-                            </button>
-                          </li>
-                        )
-                      )}
+                            {index + 1}
+                          </button>
+                        </li>
+                      ))}
 
-                      <li
-                        className={`page-item ${currentPage ===
-                          totalPages
-                          ? "disabled"
-                          : ""
-                          }`}
-                      >
+                      <li className={`page-item ${currentPage === totalPages ? "disabled" : ""}`}>
                         <button
                           className="page-link"
                           onClick={() =>
-                            setCurrentPage(
-                              (prev) =>
-                                prev + 1
-                            )
+                            setCurrentPage((prev) => Math.min(totalPages, prev + 1))
                           }
                         >
                           Next
                         </button>
                       </li>
-
                     </ul>
                   </nav>
                 )}
 
-
                 <div className="text-center mt-4">
-                  <button
-                    className="btn btn-outline-primary px-4"
-                    onClick={handleBack}
-                  >
+                  <button className="btn btn-outline-primary px-4" onClick={handleBack}>
                     Back
                   </button>
                 </div>
@@ -583,148 +424,91 @@ const ViewEvent = () => {
         </div>
       </div>
 
-
       {selectedEvent && (
         <div
           className="modal fade show d-block"
           tabIndex="-1"
-          style={{
-            background:
-              "rgba(0,0,0,0.5)",
-          }}
+          style={{ background: "rgba(0,0,0,0.5)" }}
         >
           <div className="modal-dialog modal-lg modal-dialog-centered">
-
             <div className="modal-content border-0 rounded-4 shadow-lg">
-
-
               <div className="modal-header bg-primary text-white">
-
-                <h5 className="modal-title">
-                  Edit Event
-                </h5>
-
-                <button
-                  className="btn-close btn-close-white"
-                  onClick={closeEditModal}
-                />
+                <h5 className="modal-title">Edit Event</h5>
+                <button className="btn-close btn-close-white" onClick={closeEditModal} />
               </div>
 
-
               <div className="modal-body p-4">
-
-
                 <div className="mb-3">
-                  <label className="form-label fw-semibold">
-                    Event Type
-                  </label>
-
+                  <label className="form-label fw-semibold">Event Type</label>
                   <select
                     className="form-select"
-                    value={
-                      selectedEvent.eventType
-                    }
+                    value={selectedEvent.eventType}
                     onChange={(e) =>
-                      setSelectedEvent({
-                        ...selectedEvent,
-                        eventType:
-                          e.target.value,
-                      })
+                      setSelectedEvent({ ...selectedEvent, eventType: e.target.value })
                     }
                   >
-                    <option value="news">
-                      News
-                    </option>
-                    <option value="event">
-                      Event
-                    </option>
-                    <option value="webinar">
-                      Webinar
-                    </option>
-                    <option value="blog">
-                      Blog
-                    </option>
-                    <option value="article">
-                      Article
-                    </option>
+                    <option value="news">News</option>
+                    <option value="event">Event</option>
+                    <option value="webinar">Webinar</option>
+                    <option value="blog">Blog</option>
+                    <option value="article">Article</option>
                   </select>
                 </div>
 
-
                 <div className="mb-3">
                   <label className="form-label fw-semibold">
-                    Subject
+                    Subject <span className="text-danger">*</span>
                   </label>
-
                   <input
                     type="text"
-                    className="form-control"
-                    value={
-                      selectedEvent.subject
-                    }
+                    className={`form-control ${
+                      selectedEvent.subject?.length > 255 ? "is-invalid" : ""
+                    }`}
+                    value={selectedEvent.subject}
+                    maxLength={255}
                     onChange={(e) =>
-                      setSelectedEvent({
-                        ...selectedEvent,
-                        subject:
-                          e.target.value,
-                      })
+                      setSelectedEvent({ ...selectedEvent, subject: e.target.value })
                     }
                   />
+                  <div className="form-text text-end">
+                    {selectedEvent.subject?.length || 0}/255 characters
+                  </div>
                 </div>
-
 
                 <div className="mb-3">
                   <label className="form-label fw-semibold">
                     Description <span className="text-danger">*</span>
                   </label>
-
                   <div className="input-group">
-
                     <span className="input-group-text bg-light border-end-0 align-items-start pt-2">
                       <i className="bi bi-text-paragraph text-muted"></i>
                     </span>
-
                     <textarea
-                      className={`form-control border-start-0 ps-0 ${selectedEvent.description?.length > 50000
-                          ? "is-invalid"
-                          : ""
-                        }`}
+                      className={`form-control border-start-0 ps-0 ${
+                        selectedEvent.description?.length > 50000 ? "is-invalid" : ""
+                      }`}
                       rows="6"
                       value={selectedEvent.description}
+                      maxLength={50000}
                       onChange={(e) =>
                         setSelectedEvent({
                           ...selectedEvent,
-                          description: e.target.value.slice(0, 50000), // HARD LIMIT
+                          description: e.target.value.slice(0, 50000),
                         })
                       }
                       placeholder="Provide details about your event..."
                     />
                   </div>
-
-                  {/* ERROR MESSAGE (optional) */}
-                  {selectedEvent.description?.length > 50000 && (
-                    <div className="text-danger small mt-1">
-                      Maximum 50000 characters allowed
-                    </div>
-                  )}
-
-                  {/* CHARACTER COUNTER */}
                   <div className="form-text text-end">
                     {selectedEvent.description?.length || 0}/50000 characters
                   </div>
                 </div>
               </div>
 
-
               <div className="modal-footer">
-
-                <button
-                  className="btn btn-light border"
-                  onClick={closeEditModal}
-                >
+                <button className="btn btn-light border" onClick={closeEditModal}>
                   Cancel
                 </button>
-
                 <button
                   className="btn btn-primary px-4"
                   onClick={handleUpdate}
@@ -739,25 +523,17 @@ const ViewEvent = () => {
                     "Save Changes"
                   )}
                 </button>
-
               </div>
             </div>
           </div>
         </div>
       )}
 
-
       {popup.show && (
         <Popup
           message={popup.message}
           type={popup.type}
-          onClose={() =>
-            setPopup({
-              show: false,
-              message: "",
-              type: "default",
-            })
-          }
+          onClose={() => setPopup({ show: false, message: "", type: "default" })}
         />
       )}
     </div>
